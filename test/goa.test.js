@@ -480,6 +480,125 @@ test('Goa HTTP Integration', async (t) => {
     });
   });
 
+  await t.test('routing shortcuts should work', async () => {
+    const app = new Application();
+
+    app.get('/hello', async (ctx) => {
+      ctx.response.json({ message: 'hello' });
+    });
+
+    app.post('/echo', async (ctx) => {
+      const body = await ctx.request.json();
+      ctx.response.json({ echo: body });
+    });
+
+    app.put('/update', async (ctx) => {
+      ctx.response.json({ status: 'updated' });
+    });
+
+    app.delete('/remove', async (ctx) => {
+      ctx.response.sendStatus(204, null);
+    });
+
+    app.patch('/patch', async (ctx) => {
+      ctx.response.json({ status: 'patched' });
+    });
+
+    app.all('/all', async (ctx) => {
+      ctx.response.json({ status: 'all' });
+    });
+
+    // 404 handler
+    app.use(async (ctx) => {
+      if (!ctx.body) {
+        ctx.response.sendStatus(404, { error: 'Not Found' });
+      }
+    });
+
+    const server = app.listen(0);
+
+    await new Promise((resolve) => {
+      server.once('listening', async () => {
+        const port = server.address().port;
+
+        // Test GET
+        const getRes = await requestJson({ method: 'GET', port, path: '/hello' });
+        assert.strictEqual(getRes.status, 200);
+        assert.strictEqual(getRes.body.message, 'hello');
+
+        // Test POST
+        const postRes = await requestJson({ method: 'POST', port, path: '/echo', body: { test: 1 } });
+        assert.strictEqual(postRes.status, 200);
+        assert.deepStrictEqual(postRes.body.echo, { test: 1 });
+
+        // Test PUT
+        const putRes = await requestJson({ method: 'PUT', port, path: '/update' });
+        assert.strictEqual(putRes.status, 200);
+        assert.strictEqual(putRes.body.status, 'updated');
+
+        // Test DELETE
+        const delRes = await requestJson({ method: 'DELETE', port, path: '/remove' });
+        assert.strictEqual(delRes.status, 204);
+
+        // Test PATCH
+        const patchRes = await requestJson({ method: 'PATCH', port, path: '/patch' });
+        assert.strictEqual(patchRes.status, 200);
+        assert.strictEqual(patchRes.body.status, 'patched');
+
+        // Test ALL
+        const allRes = await requestJson({ method: 'GET', port, path: '/all' });
+        assert.strictEqual(allRes.status, 200);
+        assert.strictEqual(allRes.body.status, 'all');
+
+        // Test wrong method on route (now returns 404)
+        const wrongRes = await requestJson({ method: 'POST', port, path: '/hello' });
+        assert.strictEqual(wrongRes.status, 404);
+
+        server.close();
+        resolve();
+      });
+    });
+  });
+
+  await t.test('routing with path params should work', async () => {
+    const app = new Application();
+
+    app.get('/users/:id', async (ctx) => {
+      ctx.response.json({ id: ctx.params.id, name: 'Test' });
+    });
+
+    app.put('/users/:id', async (ctx) => {
+      ctx.response.json({ updated: ctx.params.id });
+    });
+
+    app.delete('/users/:id', async (ctx) => {
+      ctx.response.sendStatus(204, null);
+    });
+
+    const server = app.listen(0);
+
+    await new Promise((resolve) => {
+      server.once('listening', async () => {
+        const port = server.address().port;
+
+        const getRes = await requestJson({ method: 'GET', port, path: '/users/123' });
+        assert.strictEqual(getRes.status, 200);
+        assert.strictEqual(getRes.body.id, '123');
+        assert.strictEqual(getRes.body.name, 'Test');
+
+        const putRes = await requestJson({ method: 'PUT', port, path: '/users/456' });
+        assert.strictEqual(putRes.status, 200);
+        assert.strictEqual(putRes.body.updated, '456');
+
+        const delRes = await requestJson({ method: 'DELETE', port, path: '/users/789' });
+        assert.strictEqual(delRes.status, 204);
+
+        server.close();
+        resolve();
+      });
+    });
+  });
+
   await t.test('users CRUD integration flow', async () => {
     const app = new Application();
     const users = new Map();
