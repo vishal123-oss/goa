@@ -215,16 +215,49 @@ test('Goa Framework', async (t) => {
     };
 
     const response = new Response(mockReq, mockRes);
+    response.set({ 'X-Test': 'yes' });
     response.redirect('/next');
     response.cacheControl(120);
     response.noCache();
     response.cors({ origin: 'https://example.com', credentials: true });
+    response.links({ self: '/users' });
+    response.location('/next');
 
     assert.strictEqual(response.status, 302);
     assert.strictEqual(response.get('Location'), '/next');
     assert.strictEqual(headers['cache-control'].includes('no-cache'), true);
     assert.strictEqual(headers['access-control-allow-origin'], 'https://example.com');
     assert.strictEqual(headers['access-control-allow-credentials'], 'true');
+    assert.strictEqual(headers['x-test'], 'yes');
+    assert.ok(headers['link'].includes('rel="self"'));
+  });
+
+  await t.test('Response should support send helpers', () => {
+    const mockReq = { httpVersionMajor: 1, headers: {} };
+    const headers = {};
+    const mockRes = {
+      statusCode: 200,
+      getHeaders: () => headers,
+      setHeader: (key, val) => {
+        headers[key.toLowerCase()] = val;
+      },
+      removeHeader: (key) => {
+        delete headers[key.toLowerCase()];
+      },
+      headersSent: false,
+      finished: false,
+      socket: { writable: true }
+    };
+
+    const response = new Response(mockReq, mockRes);
+    response.send({ ok: true });
+    assert.strictEqual(response.type, 'application/json');
+    response.text('hello');
+    assert.strictEqual(response.type, 'text/plain');
+    response.html('<p>hi</p>');
+    assert.strictEqual(response.type, 'text/html');
+    response.sendStatus(202, { queued: true });
+    assert.strictEqual(response.status, 202);
   });
 
   await t.test('Response class should work', () => {
@@ -248,14 +281,19 @@ test('Goa Framework', async (t) => {
 
     const response = new Response(mockReq, mockRes);
     response.status = 201;
+    response.statusCode = 202;
+    response.statusMessage = 'Accepted';
     response.body = { ok: true };
+    response.charset = 'utf-8';
     response.vary('Accept');
     response.cookie('token', 'abc123');
 
-    assert.strictEqual(response.status, 201);
+    assert.strictEqual(response.status, 202);
+    assert.strictEqual(response.message, 'Accepted');
     assert.strictEqual(response.type, 'application/json');
     assert.ok(Number.isFinite(response.length));
     assert.ok(response.get('Vary').includes('Accept'));
+    assert.ok(response.charset.includes('utf-8'));
   });
 
   await t.test('Context class should work', () => {
@@ -308,7 +346,10 @@ test('Goa HTTP Integration', async (t) => {
       ctx.body = { message: 'Hello Goa!' };
     });
 
-    const server = app.listen(0);
+    let callbackCalled = false;
+    const server = app.listen(0, () => {
+      callbackCalled = true;
+    });
     
     await new Promise((resolve) => {
       server.once('listening', () => {
@@ -320,6 +361,7 @@ test('Goa HTTP Integration', async (t) => {
           res.on('end', () => {
             const json = JSON.parse(data);
             assert.strictEqual(json.message, 'Hello Goa!');
+            assert.strictEqual(callbackCalled, true);
             server.close();
             resolve();
           });
@@ -447,8 +489,7 @@ test('Goa HTTP Integration', async (t) => {
       try {
         return await ctx.request.json();
       } catch (error) {
-        ctx.status = 400;
-        ctx.body = { error: 'Invalid JSON payload.' };
+        ctx.response.sendStatus(400, { error: 'Invalid JSON payload.' });
         return null;
       }
     };
@@ -469,13 +510,14 @@ test('Goa HTTP Integration', async (t) => {
           role: payload.role || 'member'
         };
         users.set(user.id, user);
-        ctx.status = 201;
-        ctx.body = { data: user };
+        ctx.response.statusCode = 201;
+        ctx.response.json({ data: user });
         return;
       }
 
       if (ctx.path === '/users' && ctx.method === 'GET') {
-        ctx.body = { data: Array.from(users.values()) };
+        ctx.response.links({ self: '/users' });
+        ctx.response.json({ data: Array.from(users.values()) });
         return;
       }
 
@@ -483,13 +525,12 @@ test('Goa HTTP Integration', async (t) => {
       if (userId !== null) {
         const existing = users.get(userId);
         if (!existing) {
-          ctx.status = 404;
-          ctx.body = { error: 'User not found.' };
+          ctx.response.sendStatus(404, { error: 'User not found.' });
           return;
         }
 
         if (ctx.method === 'GET') {
-          ctx.body = { data: existing };
+          ctx.response.json({ data: existing });
           return;
         }
 
@@ -498,20 +539,18 @@ test('Goa HTTP Integration', async (t) => {
           if (!payload) return;
           const updated = { ...existing, ...payload };
           users.set(userId, updated);
-          ctx.body = { data: updated };
+          ctx.response.json({ data: updated });
           return;
         }
 
         if (ctx.method === 'DELETE') {
           users.delete(userId);
-          ctx.status = 204;
-          ctx.body = null;
+          ctx.response.sendStatus(204, null);
           return;
         }
       }
 
-      ctx.status = 404;
-      ctx.body = { error: 'Not Found' };
+      ctx.response.sendStatus(404, { error: 'Not Found' });
     });
 
     const server = app.listen(0);

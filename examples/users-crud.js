@@ -59,7 +59,8 @@ app.use(async ctx => {
   ctx.response.cors();
 
   if (ctx.path === '/') {
-    ctx.body = {
+    ctx.response.statusCode = 200;
+    ctx.response.json({
       message: 'Goa Users CRUD Demo',
       endpoints: {
         list: 'GET /users',
@@ -68,7 +69,16 @@ app.use(async ctx => {
         update: 'PUT /users/:id',
         remove: 'DELETE /users/:id'
       }
-    };
+    });
+    return;
+  }
+
+  if (ctx.path === '/health') {
+    ctx.response.set({
+      'X-App': 'goa-users',
+      'X-Status': 'ok'
+    });
+    ctx.response.text('ok');
     return;
   }
 
@@ -76,7 +86,11 @@ app.use(async ctx => {
     const role = normalizeString(ctx.query.role);
     const results = Array.from(users.values()).filter(user => !role || user.role === role);
     ctx.response.cacheControl(30);
-    ctx.body = { data: results, count: results.length };
+    ctx.response.links({
+      self: '/users',
+      create: '/users'
+    });
+    ctx.response.json({ data: results, count: results.length });
     return;
   }
 
@@ -86,8 +100,7 @@ app.use(async ctx => {
 
     const error = validateCreatePayload(payload);
     if (error) {
-      ctx.status = 400;
-      ctx.body = { error };
+      ctx.response.sendStatus(400, { error });
       return;
     }
 
@@ -101,8 +114,8 @@ app.use(async ctx => {
     };
 
     users.set(user.id, user);
-    ctx.status = 201;
-    ctx.body = { data: user };
+    ctx.response.statusCode = 201;
+    ctx.response.json({ data: user });
     return;
   }
 
@@ -112,18 +125,16 @@ app.use(async ctx => {
 
     if (ctx.method === 'GET') {
       if (!existing) {
-        ctx.status = 404;
-        ctx.body = { error: 'User not found.' };
+        ctx.response.sendStatus(404, { error: 'User not found.' });
         return;
       }
-      ctx.body = { data: existing };
+      ctx.response.json({ data: existing });
       return;
     }
 
     if (ctx.method === 'PUT') {
       if (!existing) {
-        ctx.status = 404;
-        ctx.body = { error: 'User not found.' };
+        ctx.response.sendStatus(404, { error: 'User not found.' });
         return;
       }
 
@@ -132,8 +143,7 @@ app.use(async ctx => {
 
       const error = validateUpdatePayload(payload);
       if (error) {
-        ctx.status = 400;
-        ctx.body = { error };
+        ctx.response.sendStatus(400, { error });
         return;
       }
 
@@ -146,26 +156,23 @@ app.use(async ctx => {
       };
 
       users.set(userId, updated);
-      ctx.body = { data: updated };
+      ctx.response.json({ data: updated });
       return;
     }
 
     if (ctx.method === 'DELETE') {
       if (!existing) {
-        ctx.status = 404;
-        ctx.body = { error: 'User not found.' };
+        ctx.response.sendStatus(404, { error: 'User not found.' });
         return;
       }
 
       users.delete(userId);
-      ctx.status = 204;
-      ctx.body = null;
+      ctx.response.sendStatus(204, null);
       return;
     }
   }
 
-  ctx.status = 404;
-  ctx.body = { error: 'Not Found' };
+  ctx.response.sendStatus(404, { error: 'Not Found' });
 });
 
 const PORT = process.env.PORT || 4000;
