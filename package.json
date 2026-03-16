@@ -18,8 +18,9 @@
   "scripts": {
     "start": "node index.js",
     "dev": "node --watch index.js",
-    "test": "node --test test/*.test.js",
+    "test": "node --test --experimental-test-coverage test/*.test.js",
     "test:watch": "node --test --watch test/*.test.js",
+    "test:coverage": "node --test --experimental-test-coverage test/*.test.js",
     "build": "npm run build:cjs && npm run build:esm",
     "build:esm": "mkdir -p dist && cp -r lib dist/lib && cp index.js dist/",
     "build:cjs": "mkdir -p dist && node scripts/build-cjs.js",

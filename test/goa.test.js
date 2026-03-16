@@ -6,6 +6,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'http';
+import { Readable } from 'node:stream';
+import { once } from 'node:events';
 
 // Import the framework
 import Goa, { Application, Context, Request, Response, compose } from '../index.js';
@@ -121,9 +123,10 @@ test('Goa Framework', async (t) => {
       url: '/test?foo=bar',
       method: 'GET',
       headers: {
-        'host': 'localhost:3000',
+        host: 'localhost:3000',
         'content-type': 'application/json',
-        'x-requested-with': 'XMLHttpRequest'
+        'x-requested-with': 'XMLHttpRequest',
+        accept: 'application/json'
       },
       socket: {
         encrypted: false,
@@ -143,21 +146,116 @@ test('Goa Framework', async (t) => {
     assert.strictEqual(request.hostname, 'localhost');
     assert.strictEqual(request.xhr, true);
     assert.strictEqual(request.type, 'application/json');
+    assert.strictEqual(request.expectsJson, true);
   });
 
-  await t.test('Response class should work', () => {
-    const mockReq = {};
+  await t.test('Request should parse cookies and auth headers', async () => {
+    const mockReq = {
+      url: '/auth',
+      method: 'GET',
+      headers: {
+        host: 'localhost:3000',
+        cookie: 'token=abc123; theme=dark',
+        authorization: `Basic ${Buffer.from('goa:secret').toString('base64')}`,
+        accept: 'text/html'
+      },
+      socket: {
+        encrypted: false,
+        remoteAddress: '127.0.0.1'
+      }
+    };
+    const mockRes = { statusCode: 200 };
+
+    const request = new Request(mockReq, mockRes);
+    assert.deepStrictEqual(request.cookies, { token: 'abc123', theme: 'dark' });
+    assert.strictEqual(request.cookie('token'), 'abc123');
+    assert.deepStrictEqual(request.auth, { username: 'goa', password: 'secret' });
+    assert.strictEqual(request.expectsHtml, true);
+    assert.strictEqual(request.isGet, true);
+  });
+
+  await t.test('Request should read and parse JSON body', async () => {
+    const payload = { name: 'Goa', role: 'framework' };
+    const body = JSON.stringify(payload);
+    const stream = Readable.from([Buffer.from(body)]);
+    stream.headers = {
+      'content-type': 'application/json',
+      'content-length': Buffer.byteLength(body)
+    };
+    stream.method = 'POST';
+    stream.url = '/users';
+
+    const request = new Request(stream, { statusCode: 200 });
+    const result = await request.json();
+
+    assert.deepStrictEqual(result, payload);
+    assert.deepStrictEqual(await request.parse(), payload);
+  });
+
+  await t.test('Response should handle redirect and helpers', () => {
+    const mockReq = {
+      httpVersionMajor: 1,
+      headers: {
+        accept: 'text/html'
+      }
+    };
+    const headers = {};
     const mockRes = {
       statusCode: 200,
-      getHeaders: () => ({}),
-      setHeader: (key, val) => {},
-      removeHeader: (key) => {},
-      headersSent: false
+      getHeaders: () => headers,
+      setHeader: (key, val) => {
+        headers[key.toLowerCase()] = val;
+      },
+      removeHeader: (key) => {
+        delete headers[key.toLowerCase()];
+      },
+      headersSent: false,
+      finished: false,
+      socket: { writable: true }
     };
 
     const response = new Response(mockReq, mockRes);
-    response.status = 200;
-    assert.strictEqual(response.status, 200);
+    response.redirect('/next');
+    response.cacheControl(120);
+    response.noCache();
+    response.cors({ origin: 'https://example.com', credentials: true });
+
+    assert.strictEqual(response.status, 302);
+    assert.strictEqual(response.get('Location'), '/next');
+    assert.strictEqual(headers['cache-control'].includes('no-cache'), true);
+    assert.strictEqual(headers['access-control-allow-origin'], 'https://example.com');
+    assert.strictEqual(headers['access-control-allow-credentials'], 'true');
+  });
+
+  await t.test('Response class should work', () => {
+    const mockReq = {
+      httpVersionMajor: 1
+    };
+    const headers = {};
+    const mockRes = {
+      statusCode: 200,
+      getHeaders: () => headers,
+      setHeader: (key, val) => {
+        headers[key.toLowerCase()] = val;
+      },
+      removeHeader: (key) => {
+        delete headers[key.toLowerCase()];
+      },
+      headersSent: false,
+      finished: false,
+      socket: { writable: true }
+    };
+
+    const response = new Response(mockReq, mockRes);
+    response.status = 201;
+    response.body = { ok: true };
+    response.vary('Accept');
+    response.cookie('token', 'abc123');
+
+    assert.strictEqual(response.status, 201);
+    assert.strictEqual(response.type, 'application/json');
+    assert.ok(Number.isFinite(response.length));
+    assert.ok(response.get('Vary').includes('Accept'));
   });
 
   await t.test('Context class should work', () => {
@@ -169,6 +267,40 @@ test('Goa Framework', async (t) => {
 });
 
 test('Goa HTTP Integration', async (t) => {
+  const requestJson = async ({ method = 'GET', port, path, headers = {}, body }) => {
+    const payload = body ? JSON.stringify(body) : null;
+    const response = await new Promise((resolve, reject) => {
+      const req = http.request(
+        {
+          method,
+          host: 'localhost',
+          port,
+          path,
+          headers: {
+            ...headers,
+            ...(payload ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } : {})
+          }
+        },
+        (res) => {
+          let data = '';
+          res.on('data', chunk => { data += chunk; });
+          res.on('end', () => {
+            resolve({
+              status: res.statusCode,
+              headers: res.headers,
+              body: data ? JSON.parse(data) : null
+            });
+          });
+        }
+      );
+      req.on('error', reject);
+      if (payload) req.write(payload);
+      req.end();
+    });
+
+    return response;
+  };
+
   await t.test('should start server and respond', async () => {
     const app = new Application();
     
@@ -250,6 +382,200 @@ test('Goa HTTP Integration', async (t) => {
           server.close();
           resolve();
         });
+      });
+    });
+  });
+
+  await t.test('should support context helpers', async () => {
+    const app = new Application();
+
+    app.use(async (ctx) => {
+      ctx.set('X-Test', 'yes');
+      ctx.setCookie('session', 'abc123', { httpOnly: true });
+      ctx.body = {
+        ip: ctx.ip,
+        cookies: ctx.cookies,
+        elapsed: ctx.elapsed,
+        responded: ctx.responded,
+        acceptsJson: ctx.accepts('application/json')
+      };
+      ctx.markResponded();
+    });
+
+    const server = app.listen(0);
+
+    await new Promise((resolve) => {
+      server.once('listening', () => {
+        const port = server.address().port;
+        const req = http.request(
+          {
+            host: 'localhost',
+            port,
+            path: '/helpers',
+            headers: {
+              Cookie: 'theme=dark',
+              Accept: 'application/json'
+            }
+          },
+          (res) => {
+            let data = '';
+            res.on('data', chunk => { data += chunk; });
+            res.on('end', () => {
+              const json = JSON.parse(data);
+              assert.strictEqual(res.headers['x-test'], 'yes');
+              assert.ok(res.headers['set-cookie']);
+              assert.strictEqual(json.cookies.theme, 'dark');
+              assert.ok(json.elapsed >= 0);
+              assert.strictEqual(json.responded, false);
+              assert.strictEqual(json.acceptsJson, 'application/json');
+              server.close();
+              resolve();
+            });
+          }
+        );
+        req.end();
+      });
+    });
+  });
+
+  await t.test('users CRUD integration flow', async () => {
+    const app = new Application();
+    const users = new Map();
+    let nextId = 1;
+
+    const readBody = async ctx => {
+      try {
+        return await ctx.request.json();
+      } catch (error) {
+        ctx.status = 400;
+        ctx.body = { error: 'Invalid JSON payload.' };
+        return null;
+      }
+    };
+
+    const parseUserId = path => {
+      const match = path.match(/^\/users\/(\d+)$/);
+      return match ? Number(match[1]) : null;
+    };
+
+    app.use(async ctx => {
+      if (ctx.path === '/users' && ctx.method === 'POST') {
+        const payload = await readBody(ctx);
+        if (!payload) return;
+        const user = {
+          id: nextId++,
+          name: payload.name,
+          email: payload.email,
+          role: payload.role || 'member'
+        };
+        users.set(user.id, user);
+        ctx.status = 201;
+        ctx.body = { data: user };
+        return;
+      }
+
+      if (ctx.path === '/users' && ctx.method === 'GET') {
+        ctx.body = { data: Array.from(users.values()) };
+        return;
+      }
+
+      const userId = parseUserId(ctx.path);
+      if (userId !== null) {
+        const existing = users.get(userId);
+        if (!existing) {
+          ctx.status = 404;
+          ctx.body = { error: 'User not found.' };
+          return;
+        }
+
+        if (ctx.method === 'GET') {
+          ctx.body = { data: existing };
+          return;
+        }
+
+        if (ctx.method === 'PUT') {
+          const payload = await readBody(ctx);
+          if (!payload) return;
+          const updated = { ...existing, ...payload };
+          users.set(userId, updated);
+          ctx.body = { data: updated };
+          return;
+        }
+
+        if (ctx.method === 'DELETE') {
+          users.delete(userId);
+          ctx.status = 204;
+          ctx.body = null;
+          return;
+        }
+      }
+
+      ctx.status = 404;
+      ctx.body = { error: 'Not Found' };
+    });
+
+    const server = app.listen(0);
+
+    await new Promise((resolve) => {
+      server.once('listening', async () => {
+        const port = server.address().port;
+
+        const created = await requestJson({
+          method: 'POST',
+          port,
+          path: '/users',
+          body: { name: 'Ada', email: 'ada@example.com' }
+        });
+
+        assert.strictEqual(created.status, 201);
+        assert.strictEqual(created.body.data.name, 'Ada');
+
+        const list = await requestJson({
+          method: 'GET',
+          port,
+          path: '/users'
+        });
+
+        assert.strictEqual(list.status, 200);
+        assert.strictEqual(list.body.data.length, 1);
+
+        const userId = created.body.data.id;
+        const read = await requestJson({
+          method: 'GET',
+          port,
+          path: `/users/${userId}`
+        });
+
+        assert.strictEqual(read.status, 200);
+        assert.strictEqual(read.body.data.email, 'ada@example.com');
+
+        const updated = await requestJson({
+          method: 'PUT',
+          port,
+          path: `/users/${userId}`,
+          body: { role: 'admin' }
+        });
+
+        assert.strictEqual(updated.status, 200);
+        assert.strictEqual(updated.body.data.role, 'admin');
+
+        const removed = await requestJson({
+          method: 'DELETE',
+          port,
+          path: `/users/${userId}`
+        });
+
+        assert.strictEqual(removed.status, 204);
+
+        const missing = await requestJson({
+          method: 'GET',
+          port,
+          path: `/users/${userId}`
+        });
+
+        assert.strictEqual(missing.status, 404);
+        server.close();
+        resolve();
       });
     });
   });
