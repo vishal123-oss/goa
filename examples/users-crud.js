@@ -3,9 +3,14 @@
  * Run with: node examples/users-crud.js
  */
 
-import Goa from '../index.js';
+import Goa, { Runner } from '../index.js';
 
 const app = new Goa();
+
+// Demonstrate Runner access - middleware runs sequentially between request/response
+const runner = app.getRunner();
+console.log('[Users CRUD] Runner initialized, middleware count:', runner.count);
+
 const users = new Map();
 let nextId = 1;
 

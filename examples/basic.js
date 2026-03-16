@@ -3,9 +3,25 @@
  * Run with: npm start or node examples/basic.js
  */
 
-import Goa from '../index.js';
+import Goa, { Runner } from '../index.js';
 
 const app = new Goa();
+
+// Demonstrate Runner usage - middleware runner for request/response cycle
+const runner = app.getRunner();
+
+// You can also create standalone runners
+const standaloneRunner = new Runner();
+
+// Attach middleware to standalone runner
+standaloneRunner.attach(async (ctx, next) => {
+  console.log('[Runner] Before handler');
+  await next();
+  console.log('[Runner] After handler');
+});
+
+// Run runner independently
+// standaloneRunner.run({}).then(() => console.log('Runner completed'));
 
 // Logger middleware
 app.use(async (ctx, next) => {

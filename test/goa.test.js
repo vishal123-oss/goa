@@ -737,6 +737,246 @@ test('Goa HTTP Integration', async (t) => {
       });
     });
   });
+
+  // Runner Tests
+  await t.test('Runner', async (t) => {
+    // Import Runner
+    const { Runner } = await import('../index.js');
+
+    await t.test('should export Runner', () => {
+      assert.strictEqual(typeof Runner, 'function');
+    });
+
+    await t.test('should create a new Runner instance', () => {
+      const runner = new Runner();
+      assert.strictEqual(runner instanceof Runner, true);
+      assert.strictEqual(Array.isArray(runner.middleware), true);
+      assert.strictEqual(runner.middleware.length, 0);
+      assert.strictEqual(runner.currentState, 'idle');
+    });
+
+    await t.test('attach() should add middleware', () => {
+      const runner = new Runner();
+      const fn = async (ctx, next) => await next();
+      runner.attach(fn);
+      assert.strictEqual(runner.middleware.length, 1);
+      assert.strictEqual(typeof runner.middleware[0], 'function');
+    });
+
+    await t.test('attach() should throw on non-function', () => {
+      const runner = new Runner();
+      assert.throws(() => {
+        runner.attach('not a function');
+      }, TypeError);
+    });
+
+    await t.test('attach() should return runner for chaining', () => {
+      const runner = new Runner();
+      const result = runner.attach(async (ctx, next) => await next());
+      assert.strictEqual(result, runner);
+    });
+
+    await t.test('attachAll() should add multiple middleware', () => {
+      const runner = new Runner();
+      const fn1 = async (ctx, next) => await next();
+      const fn2 = async (ctx, next) => await next();
+      runner.attachAll(fn1, fn2);
+      assert.strictEqual(runner.middleware.length, 2);
+    });
+
+    await t.test('count getter should return middleware count', () => {
+      const runner = new Runner();
+      runner.attach(async (ctx, next) => await next());
+      runner.attach(async (ctx, next) => await next());
+      assert.strictEqual(runner.count, 2);
+    });
+
+    await t.test('remove() should remove middleware by index', () => {
+      const runner = new Runner();
+      const fn1 = async (ctx, next) => await next();
+      const fn2 = async (ctx, next) => await next();
+      runner.attach(fn1);
+      runner.attach(fn2);
+      runner.remove(0);
+      assert.strictEqual(runner.middleware.length, 1);
+      // After remove, only the second middleware remains
+      assert.strictEqual(runner.middleware.length, 1);
+    });
+
+    await t.test('clear() should remove all middleware', () => {
+      const runner = new Runner();
+      runner.attach(async (ctx, next) => await next());
+      runner.attach(async (ctx, next) => await next());
+      runner.clear();
+      assert.strictEqual(runner.middleware.length, 0);
+    });
+
+    await t.test('run() should execute middleware sequentially', async () => {
+      const runner = new Runner();
+      const order = [];
+
+      runner.attach(async (ctx, next) => {
+        order.push(1);
+        await next();
+        order.push(4);
+      });
+
+      runner.attach(async (ctx, next) => {
+        order.push(2);
+        await next();
+        order.push(3);
+      });
+
+      await runner.run({});
+      assert.deepStrictEqual(order, [1, 2, 3, 4]);
+    });
+
+    await t.test('run() should pass context to middleware', async () => {
+      const runner = new Runner();
+      let receivedCtx = null;
+
+      runner.attach(async (ctx, next) => {
+        receivedCtx = ctx;
+        await next();
+      });
+
+      const ctx = { test: 'value' };
+      await runner.run(ctx);
+      assert.strictEqual(receivedCtx, ctx);
+    });
+
+    await t.test('run() should call finalHandler after middleware', async () => {
+      const runner = new Runner();
+      const order = [];
+
+      runner.attach(async (ctx, next) => {
+        order.push('middleware');
+        await next();
+      });
+
+      const finalHandler = async () => {
+        order.push('final');
+      };
+
+      await runner.run({}, finalHandler);
+      assert.deepStrictEqual(order, ['middleware', 'final']);
+    });
+
+    await t.test('run() should throw on missing context', async () => {
+      const runner = new Runner();
+      await assert.rejects(async () => {
+        await runner.run(null);
+      }, /Context is required/);
+    });
+
+    await t.test('run() should handle errors from middleware', async () => {
+      const runner = new Runner();
+      const testError = new Error('test error');
+
+      runner.attach(async (ctx, next) => {
+        throw testError;
+      });
+
+      await assert.rejects(async () => {
+        await runner.run({});
+      }, /test error/);
+    });
+
+    await t.test('run() should update state during execution', async () => {
+      const runner = new Runner();
+
+      runner.attach(async (ctx, next) => {
+        assert.strictEqual(runner.currentState, 'running');
+        await next();
+      });
+
+      assert.strictEqual(runner.currentState, 'idle');
+      await runner.run({});
+      assert.strictEqual(runner.currentState, 'completed');
+    });
+
+    await t.test('runSync() should execute middleware synchronously', () => {
+      const runner = new Runner();
+      const order = [];
+
+      runner.attach((ctx, next) => {
+        order.push(1);
+        next();
+        order.push(4);
+      });
+
+      runner.attach((ctx, next) => {
+        order.push(2);
+        next();
+        order.push(3);
+      });
+
+      runner.runSync({});
+      assert.deepStrictEqual(order, [1, 2, 3, 4]);
+    });
+
+    await t.test('compose() should return composable function', async () => {
+      const runner = new Runner();
+      const order = [];
+
+      runner.attach(async (ctx, next) => {
+        order.push(1);
+        await next();
+        order.push(3);
+      });
+
+      runner.attach(async (ctx, next) => {
+        order.push(2);
+        await next();
+      });
+
+      const fn = runner.compose();
+      await fn({}, async () => {});
+      assert.deepStrictEqual(order, [1, 2, 3]);
+    });
+
+    await t.test('toJSON() should return runner state', () => {
+      const runner = new Runner();
+      runner.attach(async (ctx, next) => await next());
+      const json = runner.toJSON();
+      assert.strictEqual(json.state, 'idle');
+      assert.strictEqual(json.middlewareCount, 1);
+    });
+
+    await t.test('Application should have runner instance', () => {
+      const app = new Application();
+      assert.strictEqual(typeof app.runner, 'object');
+      assert.strictEqual(app.runner instanceof Runner, true);
+    });
+
+    await t.test('Application use() should attach to runner', () => {
+      const app = new Application();
+      const fn = async (ctx, next) => await next();
+      app.use(fn);
+      assert.strictEqual(app.runner.middleware.length, 1);
+      assert.strictEqual(typeof app.runner.middleware[0], 'function');
+    });
+
+    await t.test('Application getRunner() should return runner', () => {
+      const app = new Application();
+      const runner = app.getRunner();
+      assert.strictEqual(runner, app.runner);
+    });
+
+    await t.test('Application run() should use runner', async () => {
+      const app = new Application();
+      const order = [];
+
+      app.use(async (ctx, next) => {
+        order.push(1);
+        await next();
+        order.push(2);
+      });
+
+      await app.run({});
+      assert.deepStrictEqual(order, [1, 2]);
+    });
+  });
 });
 
 console.log('Running Goa Framework tests...\n');
