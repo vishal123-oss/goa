@@ -43,7 +43,7 @@ app.use(async (ctx, next) => {
 app.use(async (ctx) => {
   // Simple routing example
   if (ctx.path === '/') {
-    ctx.type = 'html';
+    // HTML is inferred from string content
     ctx.body = `
       <!DOCTYPE html>
       <html>
@@ -60,15 +60,17 @@ app.use(async (ctx) => {
       </html>
     `;
   } else if (ctx.path === '/json') {
+    // Objects are JSON stringified automatically
     ctx.body = {
       message: 'Hello from Goa!',
       framework: 'koa-inspired',
       version: '1.0.0'
     };
   } else if (ctx.path === '/text') {
+    // Plain strings are sent as text/plain
     ctx.body = 'Hello, this is a plain text response!';
   } else if (ctx.path === '/html') {
-    ctx.type = 'html';
+    // HTML is inferred from string content
     ctx.body = '<h1>HTML Response</h1><p>Rendered with proper content-type</p>';
   } else {
     ctx.status = 404;

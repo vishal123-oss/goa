@@ -63,8 +63,9 @@ app.use(async (ctx, next) => {
 
 // Root endpoint
 app.get('/', async (ctx) => {
-  ctx.response.statusCode = 200;
-  ctx.response.json({
+  ctx.status = 200;
+  // Objects are JSON stringified automatically
+  ctx.body = {
     message: 'Goa Users CRUD Demo',
     endpoints: {
       list: 'GET /users',
@@ -73,7 +74,7 @@ app.get('/', async (ctx) => {
       update: 'PUT /users/:id',
       remove: 'DELETE /users/:id'
     }
-  });
+  };
 });
 
 // Health check
@@ -82,7 +83,8 @@ app.get('/health', async (ctx) => {
     'X-App': 'goa-users',
     'X-Status': 'ok'
   });
-  ctx.response.text('ok');
+  // Plain string sent as text/plain
+  ctx.body = 'ok';
 });
 
 // List all users
@@ -94,7 +96,7 @@ app.get('/users', async (ctx) => {
     self: '/users',
     create: '/users'
   });
-  ctx.response.json({ data: results, count: results.length });
+  ctx.body = { data: results, count: results.length };
 });
 
 // Create user
@@ -118,8 +120,8 @@ app.post('/users', async (ctx) => {
   };
 
   users.set(user.id, user);
-  ctx.response.statusCode = 201;
-  ctx.response.json({ data: user });
+  ctx.status = 201;
+  ctx.body = { data: user };
 });
 
 // Get user by ID
@@ -130,7 +132,7 @@ app.get('/users/:id', async (ctx) => {
     ctx.response.sendStatus(404, { error: 'User not found.' });
     return;
   }
-  ctx.response.json({ data: existing });
+  ctx.body = { data: existing };
 });
 
 // Update user by ID
@@ -160,7 +162,7 @@ app.put('/users/:id', async (ctx) => {
   };
 
   users.set(userId, updated);
-  ctx.response.json({ data: updated });
+  ctx.body = { data: updated };
 });
 
 // Delete user by ID
@@ -173,13 +175,15 @@ app.delete('/users/:id', async (ctx) => {
   }
 
   users.delete(userId);
-  ctx.response.sendStatus(204, null);
+  ctx.status = 204;
+  ctx.body = null;
 });
 
 // 404 handler
 app.use(async (ctx) => {
   if (!ctx.body) {
-    ctx.response.sendStatus(404, { error: 'Not Found' });
+    ctx.status = 404;
+    ctx.body = { error: 'Not Found' };
   }
 });
 

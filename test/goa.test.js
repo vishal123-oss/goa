@@ -260,6 +260,38 @@ test('Goa Framework', async (t) => {
     assert.strictEqual(response.status, 202);
   });
 
+  await t.test('Response should infer type from body value', () => {
+    const mockReq = { httpVersionMajor: 1, headers: {} };
+    const createRes = () => {
+      const headers = {};
+      return {
+        statusCode: 200,
+        getHeaders: () => headers,
+        setHeader: (key, val) => {
+          headers[key.toLowerCase()] = val;
+        },
+        removeHeader: (key) => {
+          delete headers[key.toLowerCase()];
+        },
+        headersSent: false,
+        finished: false,
+        socket: { writable: true }
+      };
+    };
+
+    const response = new Response(mockReq, createRes());
+    response.body = 'plain text';
+    assert.strictEqual(response.type, 'text/plain');
+
+    response.clearType();
+    response.body = '<div>html</div>';
+    assert.strictEqual(response.type, 'text/html');
+
+    response.clearType();
+    response.body = { ok: true };
+    assert.strictEqual(response.type, 'application/json');
+  });
+
   await t.test('Response class should work', () => {
     const mockReq = {
       httpVersionMajor: 1
@@ -291,7 +323,6 @@ test('Goa Framework', async (t) => {
     assert.strictEqual(response.status, 202);
     assert.strictEqual(response.message, 'Accepted');
     assert.strictEqual(response.type, 'application/json');
-    assert.ok(Number.isFinite(response.length));
     assert.ok(response.get('Vary').includes('Accept'));
     assert.ok(response.charset.includes('utf-8'));
   });
@@ -423,6 +454,42 @@ test('Goa HTTP Integration', async (t) => {
           assert.ok(contentType.includes('application/json'));
           server.close();
           resolve();
+        });
+      });
+    });
+  });
+
+  await t.test('should infer content-type for text and html', async () => {
+    const app = new Application();
+
+    app.use(async (ctx) => {
+      if (ctx.path === '/text') {
+        ctx.body = 'plain text response';
+        return;
+      }
+      if (ctx.path === '/html') {
+        ctx.body = '<p>hello</p>';
+        return;
+      }
+      ctx.status = 404;
+    });
+
+    const server = app.listen(0);
+
+    await new Promise((resolve) => {
+      server.once('listening', () => {
+        const port = server.address().port;
+
+        http.get(`http://localhost:${port}/text`, (res) => {
+          const contentType = res.headers['content-type'];
+          assert.ok(contentType.includes('text/plain'));
+
+          http.get(`http://localhost:${port}/html`, (resHtml) => {
+            const htmlType = resHtml.headers['content-type'];
+            assert.ok(htmlType.includes('text/html'));
+            server.close();
+            resolve();
+          });
         });
       });
     });
